@@ -1,0 +1,6 @@
+services:
+  cat-math:
+    build: .
+    ports:
+      - "49123:80"
+    restart: always

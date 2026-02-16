@@ -26,3 +26,13 @@ python3 -m http.server 8000
 ```
 
 Then open the URL shown (e.g. http://localhost:3000 or http://localhost:8000).
+
+### Docker
+
+Serve the app with nginx via Docker Compose (container port 80 is mapped to a random host port):
+
+```bash
+docker compose up --build
+```
+
+Check the port in the output (e.g. `0.0.0.0:49123->80/tcp`) and open http://localhost:49123 (or the port shown).
