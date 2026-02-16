@@ -1,0 +1,28 @@
+# Math Practice
+
+A simple Vue.js single-page app that generates addition and subtraction problems for 3rd–5th graders.
+
+![Screenshot](screenshots/cat_math_1.png)
+
+## Features
+
+- **Problem types:** Addition, Subtraction
+- **Complexity levels:** Easy, Medium, Hard
+  - Easy: 2-digit numbers, sum &lt; 100 (addition) or top &gt; bottom (subtraction)
+  - Medium: 2-digit numbers, sum ≥ 100 (addition) or top &gt; bottom (subtraction)
+  - Hard: 3–4 digit numbers
+- **Hero image:** Random cat image (CATAAS), 4:3 aspect ratio, scale to fit
+- **Buttons:** “New problems” regenerates the math grid; “New cat” reloads the hero image
+- **Print:** A4 layout; hero image and problem grid visible; controls hidden
+
+## How to run
+
+Open `index.html` in a browser (no build step). Or serve the folder locally, for example:
+
+```bash
+npx serve .
+# or
+python3 -m http.server 8000
+```
+
+Then open the URL shown (e.g. http://localhost:3000 or http://localhost:8000).
