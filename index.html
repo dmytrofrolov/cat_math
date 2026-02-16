@@ -18,6 +18,39 @@
         margin: 0 auto;
         padding: 1.5rem;
         background: #f8f9fa;
+        position: relative;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        left: -50%;
+        top: -50%;
+        width: 200%;
+        height: 200%;
+        z-index: -1;
+        pointer-events: none;
+        background-image: url("img/paw-tile.svg");
+        background-repeat: repeat;
+        /* Tile has transparent padding so paws don't touch */
+        background-size: 96px 96px;
+        opacity: 0.05;
+        transform: rotate(-30deg);
+      }
+      .page-readme {
+        font-size: 0.9rem;
+        line-height: 1.45;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        background: #eef1f5;
+        border-radius: 6px;
+        color: #374151;
+      }
+      .page-readme a {
+        color: #2563eb;
+        text-decoration: none;
+      }
+      .page-readme a:hover {
+        text-decoration: underline;
       }
       h1 {
         margin-top: 0;
@@ -53,19 +86,36 @@
       button:hover {
         background: #1d4ed8;
       }
+      .content {
+        background: #fff;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      }
       .hero {
         width: 100%;
+        max-width: 640px;
+        height: 380px;
         aspect-ratio: 4 / 3;
+        margin-left: auto;
+        margin-right: auto;
         margin-bottom: 1.25rem;
+        padding: 1.25rem;
         border-radius: 8px;
         overflow: hidden;
         background: #e5e7eb;
+        display: flex;
+        justify-content: center;
+        align-items: center;
       }
       .hero img {
-        width: 100%;
-        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
         object-fit: contain;
         display: block;
+        margin: 0 auto;
       }
       .grid {
         display: grid;
@@ -95,81 +145,119 @@
       @media print {
         @page {
           size: A4;
-          margin: 12mm;
+          margin: 10mm;
         }
         body {
           max-width: none;
           padding: 0;
           background: #fff;
         }
+        body::before {
+          display: none !important;
+        }
+        .content {
+          box-shadow: none;
+          border-radius: 0;
+          padding: 0;
+        }
+        .page-readme,
         .controls,
         h1,
         p {
           display: none !important;
         }
         .hero {
+          width: 100%;
+          max-width: 160mm;
           height: 280px;
           aspect-ratio: 4 / 3;
+          margin-left: auto;
+          margin-right: auto;
           margin-bottom: 4mm;
           border-radius: 0;
           break-after: avoid;
+          display: flex;
+          justify-content: center;
+          align-items: center;
         }
         .hero img {
+          max-width: 100%;
+          max-height: 100%;
+          width: auto;
+          height: auto;
           object-fit: contain;
+          margin: 0 auto;
         }
         .grid {
           display: grid;
           grid-template-columns: repeat(7, 1.2fr);
-          gap: 3mm;
+          gap: 2mm;
           margin: 0;
         }
         .cell {
-          padding: 5mm;
+          padding: 1mm 2mm;
           border: 1px solid #777;
           border-radius: 10px;
           break-inside: avoid;
         }
         .problem {
-          font-size: 0.75rem;
+          font-size: 1.2rem;
         }
       }
     </style>
   </head>
   <body>
     <div id="app">
-      <div class="hero">
-        <img :src="heroCatUrl" alt="" />
-      </div>
-      <h1>Math Practice</h1>
-      <p>Simple problems for 3rd–5th graders.</p>
-      <div class="controls">
-        <label for="type">Problem type</label>
-        <select id="type" v-model="problemType">
-          <option value="addition">Addition</option>
-          <option value="subtraction">Subtraction</option>
-        </select>
-        <label for="complexity">Complexity</label>
-        <select id="complexity" v-model="complexity">
-          <option value="easy">Easy</option>
-          <option value="medium">Medium</option>
-          <option value="hard">Hard</option>
-        </select>
-        <button @click="regenerateMath">New problems</button>
-        <button @click="regenerateImage">New cat</button>
-      </div>
-      <div class="grid" v-if="problems.length">
-        <div class="cell" v-for="(p, i) in problems" :key="i">
-          <div class="problem">{{ p.top }}</div>
-          <div class="problem op">{{ p.op }} {{ p.bottom }}</div>
-          <div class="problem">{{ p.line }}</div>
-          <div class="problem answer">&nbsp;</div>
+      <div class="content">
+        <div class="page-readme">
+          <strong>Math Practice</strong> — Addition and subtraction for 3rd–5th
+          graders. Choose <em>Problem type</em> and <em>Complexity</em>; change
+          either to regenerate. Use <em>New problems</em> for a fresh grid,
+          <em>New cat</em> for a new hero image. Print (A4) shows the cat and
+          problem grid only. —
+          <a
+            href="https://github.com/dmytrofrolov/cat_math"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Source on GitHub</a
+          >
         </div>
+        <div class="hero">
+          <img :src="heroCatUrl" alt="" />
+        </div>
+        <h1>Math Practice</h1>
+        <p>Simple problems for 3rd–5th graders.</p>
+        <div class="controls">
+          <label for="type">Problem type</label>
+          <select id="type" v-model="problemType">
+            <option value="addition">Addition</option>
+            <option value="subtraction">Subtraction</option>
+          </select>
+          <label for="complexity">Complexity</label>
+          <select id="complexity" v-model="complexity">
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <button @click="regenerateMath">New problems</button>
+          <button @click="regenerateImage">New cat</button>
+        </div>
+        <div class="grid" v-if="problems.length">
+          <div class="cell" v-for="(p, i) in problems" :key="i">
+            <div class="problem">{{ p.top }}</div>
+            <div class="problem op">{{ p.op }} {{ p.bottom }}</div>
+            <div class="problem answer">&nbsp;</div>
+            <div class="problem">{{ p.line }}</div>
+          </div>
+        </div>
+        <p v-else class="hint">
+          Click New problems to create a grid of problems.
+        </p>
       </div>
-      <p v-else class="hint">Click New problems to create a grid of problems.</p>
     </div>
 
     <script>
-      const { createApp, ref, computed, onMounted } = Vue;
+      const { createApp, ref, computed, onMounted, watch } = Vue;
 
       function randomInt(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -258,6 +346,9 @@
             heroCatUrl.value =
               "https://cataas.com/cat?width=960&t=" + Date.now();
           }
+
+          watch(problemType, regenerateMath);
+          watch(complexity, regenerateMath);
 
           onMounted(() => {
             regenerateMath();

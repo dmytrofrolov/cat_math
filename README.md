@@ -2,6 +2,8 @@
 
 A simple Vue.js single-page app that generates addition and subtraction problems for 3rd–5th graders.
 
+**Repository:** [GitHub — dmytrofrolov/cat_math](https://github.com/dmytrofrolov/cat_math)
+
 ![Screenshot](screenshots/cat_math_1.png)
 
 ## Features
@@ -36,3 +38,7 @@ docker compose up --build
 ```
 
 Check the port in the output (e.g. `0.0.0.0:49123->80/tcp`) and open http://localhost:49123 (or the port shown).
+
+## Credits
+
+- **Paw icon (background pattern):** [Paw Black Shape](https://www.svgrepo.com/svg/41746/paw-black-shape) — SVG Repo
