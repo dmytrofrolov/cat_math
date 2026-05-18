@@ -4,10 +4,9 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
     <title>Jig</title>
     <style>
       * {
@@ -17,23 +16,24 @@
       }
       html {
         height: 100%;
-        height: 100dvh;
         overflow: hidden;
         background: #0a0a0c;
       }
       body {
         position: fixed;
-        inset: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
         width: 100%;
         height: 100%;
-        height: 100dvh;
         overflow: hidden;
-        overscroll-behavior: none;
-        touch-action: none;
+        -webkit-overflow-scrolling: auto;
         -webkit-touch-callout: none;
         -webkit-tap-highlight-color: transparent;
         background: #0a0a0c;
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family: -apple-system, Helvetica, Arial, sans-serif;
+        -webkit-user-select: none;
         user-select: none;
       }
       canvas {
@@ -41,25 +41,28 @@
         top: 0;
         left: 0;
         display: block;
-        touch-action: none;
       }
       #zone {
         position: fixed;
         top: 0;
         left: 0;
         width: 0;
-        height: var(--zone-h, 72px);
+        height: 72px;
         pointer-events: none;
         border-bottom: 2px solid transparent;
-        transition:
-          border-color 0.15s,
-          background 0.15s;
+        -webkit-transition: border-color 0.15s, background 0.15s;
+        transition: border-color 0.15s, background 0.15s;
         z-index: 2;
       }
       #zone.active {
         border-bottom-color: rgba(255, 220, 120, 0.55);
+        background: -webkit-linear-gradient(
+          top,
+          rgba(255, 200, 80, 0.14) 0%,
+          transparent 100%
+        );
         background: linear-gradient(
-          180deg,
+          to bottom,
           rgba(255, 200, 80, 0.14) 0%,
           transparent 100%
         );
@@ -67,25 +70,22 @@
       #hint {
         position: fixed;
         left: 50%;
-        bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
-        transform: translateX(-50%);
-        width: min(92vw, 28rem);
+        bottom: 0.75rem;
+        width: 92%;
+        max-width: 28rem;
         padding: 0 0.75rem;
         color: rgba(255, 255, 255, 0.5);
-        font-size: clamp(0.7rem, 2.8vw, 0.85rem);
+        font-size: 0.8rem;
         line-height: 1.35;
         letter-spacing: 0.02em;
         text-align: center;
         pointer-events: none;
         z-index: 2;
+        -webkit-transform: translateX(-50%);
+        transform: translateX(-50%);
       }
       body.jigging {
         cursor: none;
-      }
-      @media (pointer: coarse) {
-        body.jigging {
-          cursor: auto;
-        }
       }
     </style>
   </head>
@@ -96,43 +96,111 @@
 
     <script>
       (function () {
-        const canvas = document.getElementById("c");
-        const ctx = canvas.getContext("2d");
-        const zoneEl = document.getElementById("zone");
-        const hint = document.getElementById("hint");
-        const root = document.documentElement;
+        "use strict";
 
-        const DPR = Math.min(window.devicePixelRatio || 1, 2);
-        const isCoarse = window.matchMedia("(pointer: coarse)").matches;
+        var canvas = document.getElementById("c");
+        var ctx = canvas.getContext("2d");
+        var zoneEl = document.getElementById("zone");
+        var hint = document.getElementById("hint");
 
-        let w = 0;
-        let h = 0;
-        let viewLeft = 0;
-        let viewTop = 0;
-        let topZone = 72;
-        let t = 0;
-        let lastFrame = performance.now();
+        var DPR = Math.min(window.devicePixelRatio || 1, 2);
+        var isCoarse = false;
+        try {
+          isCoarse = window.matchMedia("(pointer: coarse)").matches;
+        } catch (e1) {
+          isCoarse = "ontouchstart" in window;
+        }
 
-        let mx = -1;
-        let my = -1;
-        let prevMx = -1;
-        let prevMy = -1;
-        let jigActive = false;
-        let touching = false;
+        var w = 0;
+        var h = 0;
+        var viewLeft = 0;
+        var viewTop = 0;
+        var topZone = 72;
+        var STEP_MS = 1000 / 60;
+        var t = 0;
+        var lastFrame = 0;
+        var accum = 0;
 
-        let offX = 0;
-        let offY = 0;
-        let pullX = 0;
-        let pullY = 0;
+        var mx = -1;
+        var my = -1;
+        var smMx = -1;
+        var smMy = -1;
+        var prevMx = -1;
+        var prevMy = -1;
+        var jigActive = false;
+        var zoneLatched = false;
+        var touching = false;
+
+        var offX = 0;
+        var offY = 0;
+        var offVX = 0;
+        var offVY = 0;
+        var pullX = 0;
+        var pullY = 0;
+        var smoothDx = 0;
+        var smoothDy = 0;
+
+        var layoutW = 0;
+        var layoutH = 0;
+        var resizeRaf = 0;
+
+        var stripePattern = null;
+
+        var raf =
+          window.requestAnimationFrame ||
+          window.webkitRequestAnimationFrame ||
+          function (cb) {
+            return window.setTimeout(function () {
+              cb(Date.now());
+            }, 16);
+          };
+
+        var now =
+          window.performance && window.performance.now
+            ? function () {
+                return window.performance.now();
+              }
+            : function () {
+                return Date.now();
+              };
+
+        var supportsPassive = false;
+        try {
+          var passiveOpts = Object.defineProperty({}, "passive", {
+            get: function () {
+              supportsPassive = true;
+            },
+          });
+          window.addEventListener("testPassive", null, passiveOpts);
+          window.removeEventListener("testPassive", null, passiveOpts);
+        } catch (e2) {
+          supportsPassive = false;
+        }
+
+        function addListener(target, type, handler, passive) {
+          if (supportsPassive && passive !== undefined) {
+            target.addEventListener(type, handler, { passive: passive });
+          } else {
+            target.addEventListener(type, handler, false);
+          }
+        }
+
+        function setClass(el, className, on) {
+          if (on) {
+            el.classList.add(className);
+          } else {
+            el.classList.remove(className);
+          }
+        }
 
         function layoutMetrics() {
-          const vv = window.visualViewport;
+          var vv = window.visualViewport;
           if (vv) {
             return {
-              w: Math.round(vv.width),
-              h: Math.round(vv.height),
-              left: Math.round(vv.offsetLeft),
-              top: Math.round(vv.offsetTop),
+              w: vv.width,
+              h: vv.height,
+              left: vv.offsetLeft,
+              top: vv.offsetTop,
             };
           }
           return {
@@ -149,40 +217,77 @@
           viewLeft = m.left;
           viewTop = m.top;
 
-          const px = function (n) {
-            return n + "px";
-          };
-          canvas.style.width = px(w);
-          canvas.style.height = px(h);
-          canvas.style.transform = "translate(" + px(viewLeft) + ", " + px(viewTop) + ")";
-          zoneEl.style.width = px(w);
-          zoneEl.style.transform = "translate(" + px(viewLeft) + ", " + px(viewTop) + ")";
+          canvas.style.width = w + "px";
+          canvas.style.height = h + "px";
+          canvas.style.webkitTransform =
+            "translate(" + viewLeft + "px," + viewTop + "px)";
+          canvas.style.transform =
+            "translate(" + viewLeft + "px," + viewTop + "px)";
+          zoneEl.style.width = w + "px";
+          zoneEl.style.webkitTransform =
+            "translate(" + viewLeft + "px," + viewTop + "px)";
+          zoneEl.style.transform =
+            "translate(" + viewLeft + "px," + viewTop + "px)";
         }
 
         function updateTopZone() {
           topZone = Math.round(Math.min(96, Math.max(52, h * 0.12)));
-          root.style.setProperty("--zone-h", topZone + "px");
+          zoneEl.style.height = topZone + "px";
         }
 
         function resize() {
-          const m = layoutMetrics();
+          var m = layoutMetrics();
+          var bw = Math.floor(m.w * DPR);
+          var bh = Math.floor(m.h * DPR);
+          if (
+            Math.abs(m.w - layoutW) < 0.5 &&
+            Math.abs(m.h - layoutH) < 0.5 &&
+            bw === canvas.width &&
+            bh === canvas.height
+          ) {
+            return;
+          }
+          layoutW = m.w;
+          layoutH = m.h;
           applyViewportLayout(m);
           updateTopZone();
 
-          canvas.width = Math.floor(w * DPR);
-          canvas.height = Math.floor(h * DPR);
-          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          canvas.width = bw;
+          canvas.height = bh;
+          if (ctx.setTransform) {
+            ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          } else {
+            ctx.scale(DPR, DPR);
+          }
+          initStripePattern();
 
-          if (mx >= 0) setJigging(inTopZone(my));
+          if (mx >= 0) {
+            setJigging(inTopZone(my));
+          }
+        }
+
+        function scheduleResize() {
+          if (resizeRaf) {
+            return;
+          }
+          resizeRaf = raf(function () {
+            resizeRaf = 0;
+            resize();
+          });
         }
 
         function inTopZone(y) {
-          return y >= 0 && y <= topZone;
+          if (!zoneLatched && y <= topZone) {
+            zoneLatched = true;
+          } else if (zoneLatched && y > topZone + 18) {
+            zoneLatched = false;
+          }
+          return zoneLatched;
         }
 
         function pointerFromEvent(e) {
-          let clientX;
-          let clientY;
+          var clientX;
+          var clientY;
           if (e.touches && e.touches.length) {
             clientX = e.touches[0].clientX;
             clientY = e.touches[0].clientY;
@@ -193,18 +298,21 @@
             clientX = e.clientX;
             clientY = e.clientY;
           }
-          const x = Math.max(0, Math.min(w, clientX - viewLeft));
-          const y = Math.max(0, Math.min(h, clientY - viewTop));
-          return { x, y };
+          var x = Math.max(0, Math.min(w, clientX - viewLeft));
+          var y = Math.max(0, Math.min(h, clientY - viewTop));
+          return { x: x, y: y };
         }
 
         function applyMovement(dx, dy) {
+          var blend = 0.18;
+          smoothDx = smoothDx * (1 - blend) + dx * blend;
+          smoothDy = smoothDy * (1 - blend) + dy * blend;
+          var cap = Math.min(w, h) * 0.08;
+          smoothDx = Math.max(-cap, Math.min(cap, smoothDx));
+          smoothDy = Math.max(-cap, Math.min(cap, smoothDy));
           if (jigActive) {
-            pullX += dx * 0.35;
-            pullY += dy * 0.35;
-          } else {
-            pullX *= 0.85;
-            pullY *= 0.85;
+            pullX += smoothDx * 0.18;
+            pullY += smoothDy * 0.18;
           }
         }
 
@@ -214,27 +322,36 @@
           mx = x;
           my = y;
           setJigging(inTopZone(my));
-          if (dx !== undefined) applyMovement(dx, dy);
+          if (dx !== undefined) {
+            applyMovement(dx, dy);
+          }
         }
 
         function clearPointer() {
           mx = -1;
           my = -1;
+          smMx = -1;
+          smMy = -1;
           prevMx = -1;
           prevMy = -1;
           touching = false;
+          zoneLatched = false;
+          smoothDx = 0;
+          smoothDy = 0;
           setJigging(false);
         }
 
         function setJigging(on) {
-          if (jigActive === on) return;
+          if (jigActive === on) {
+            return;
+          }
           jigActive = on;
-          document.body.classList.toggle("jigging", on && !isCoarse);
-          zoneEl.classList.toggle("active", on);
+          setClass(document.body, "jigging", on && !isCoarse);
+          setClass(zoneEl, "active", on);
           if (on) {
             hint.textContent = isCoarse
-              ? "Jig active — drag in the top band. Lift your finger to stop."
-              : "Jig active — your hand may drift. Leave the top band to stop.";
+              ? "Jig active - drag in the top band. Lift your finger to stop."
+              : "Jig active - your hand may drift. Leave the top band to stop.";
           } else {
             hint.textContent = isCoarse
               ? "Touch and drag in the top band to activate the jig."
@@ -243,9 +360,9 @@
         }
 
         function onPointerMove(e) {
-          const p = pointerFromEvent(e);
-          let dx = 0;
-          let dy = 0;
+          var p = pointerFromEvent(e);
+          var dx = 0;
+          var dy = 0;
           if (prevMx >= 0) {
             dx = p.x - prevMx;
             dy = p.y - prevMy;
@@ -256,85 +373,58 @@
           setPointer(p.x, p.y, dx, dy);
         }
 
-        window.addEventListener("resize", resize);
-        window.addEventListener("orientationchange", function () {
-          setTimeout(resize, 100);
-        });
-        if (window.visualViewport) {
-          window.visualViewport.addEventListener("resize", resize);
-          window.visualViewport.addEventListener("scroll", resize);
+        function initStripePattern() {
+          var stripeTile = document.createElement("canvas");
+          stripeTile.width = 16;
+          stripeTile.height = 16;
+          var stripeCtx = stripeTile.getContext("2d");
+          stripeCtx.fillStyle = "#121212";
+          stripeCtx.fillRect(0, 0, 16, 16);
+          stripeCtx.fillStyle = "#fafafa";
+          stripeCtx.fillRect(0, 0, 8, 16);
+          stripePattern = ctx.createPattern(stripeTile, "repeat");
         }
-        resize();
 
-        window.addEventListener("mousemove", onPointerMove, { passive: true });
-        window.addEventListener("mouseleave", clearPointer, { passive: true });
-
-        canvas.addEventListener(
-          "touchstart",
-          function (e) {
-            touching = true;
-            onPointerMove(e);
-          },
-          { passive: false }
-        );
-        canvas.addEventListener(
-          "touchmove",
-          function (e) {
-            e.preventDefault();
-            onPointerMove(e);
-          },
-          { passive: false }
-        );
-        canvas.addEventListener(
-          "touchend",
-          function (e) {
-            if (e.touches.length) {
-              onPointerMove(e);
-              return;
-            }
-            clearPointer();
-          },
-          { passive: true }
-        );
-        canvas.addEventListener("touchcancel", clearPointer, { passive: true });
-
-        document.addEventListener(
-          "touchmove",
-          function (e) {
-            e.preventDefault();
-          },
-          { passive: false }
-        );
-        document.addEventListener(
-          "gesturestart",
-          function (e) {
-            e.preventDefault();
-          },
-          { passive: false }
-        );
-
-        function drawGrating(cx, cy, angle, freq, phase, fg, bg) {
+        function drawGrating(cx, cy, angle, phase, alpha) {
           ctx.save();
           ctx.translate(cx, cy);
           ctx.rotate(angle);
-          const span = Math.max(w, h) * 1.6;
-          const steps = Math.ceil((span * freq) / 8) + 2;
-          for (let i = -steps; i <= steps; i++) {
-            const p = ((i / freq + phase) % 1 + 1) % 1;
-            ctx.fillStyle = p < 0.5 ? fg : bg;
-            const y0 = (i / freq) * 8 - 4;
+          ctx.translate(phase * 8, 0);
+          ctx.globalAlpha = alpha;
+          if (stripePattern) {
+            ctx.fillStyle = stripePattern;
+            var span = Math.max(w, h) * 1.8;
+            ctx.fillRect(-span, -span, span * 2, span * 2);
+          }
+          ctx.restore();
+        }
+
+        function drawGratingFallback(cx, cy, angle, phase, alpha, fg, bg) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(angle);
+          var span = Math.max(w, h) * 1.6;
+          var i;
+          var steps = Math.ceil((span * 0.018) / 8) + 2;
+          ctx.globalAlpha = alpha;
+          for (i = -steps; i <= steps; i++) {
+            var y0 = (i / 0.018) * 8 - 4 + phase * 8;
+            ctx.fillStyle = i % 2 === 0 ? fg : bg;
             ctx.fillRect(-span, y0, span * 2, 4);
           }
           ctx.restore();
         }
 
         function drawPinwheel(cx, cy, r, spin, teeth) {
+          var i;
+          var a0;
+          var a1;
           ctx.save();
           ctx.translate(cx, cy);
           ctx.rotate(spin);
-          for (let i = 0; i < teeth; i++) {
-            const a0 = (i / teeth) * Math.PI * 2;
-            const a1 = a0 + (Math.PI * 2) / teeth / 2;
+          for (i = 0; i < teeth; i++) {
+            a0 = (i / teeth) * Math.PI * 2;
+            a1 = a0 + (Math.PI * 2) / teeth / 2;
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.arc(0, 0, r, a0, a1);
@@ -346,92 +436,145 @@
         }
 
         function drawWaves() {
-          const cx = w * 0.5;
-          const cy = h * 0.52;
-          const rings = w < 480 ? 10 : 14;
-          const step = w < 480 ? 22 : 28;
-          for (let i = 0; i < rings; i++) {
-            const rr = 32 + i * step + Math.sin(t * 1.7 + i * 0.4) * 6;
+          var cx = w * 0.5;
+          var cy = h * 0.52;
+          var rings = w < 480 ? 10 : 14;
+          var step = w < 480 ? 22 : 28;
+          var breathe = Math.sin(t * 0.85) * 2.5;
+          var i;
+          var rr;
+          for (i = 0; i < rings; i++) {
+            rr = 32 + i * step + breathe;
             ctx.beginPath();
             ctx.arc(cx, cy, rr, 0, Math.PI * 2);
             ctx.strokeStyle =
-              i % 2 === 0 ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)";
-            ctx.lineWidth = 2 + (i % 3);
+              i % 2 === 0 ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)";
+            ctx.lineWidth = 2 + (i % 3) * 0.5;
             ctx.stroke();
           }
         }
 
         function drawPattern() {
+          var cx = w * 0.5;
+          var cy = h * 0.5;
+          var scale = Math.min(w, h);
+          var layers = [
+            { a: t * 0.28, ph: t * 0.55, al: 0.38 },
+            { a: -t * 0.22 + 0.6, ph: -t * 0.48, al: 0.34 },
+            { a: t * 0.16 + 1.1, ph: t * 0.62, al: 0.3 },
+          ];
+          var i;
+          var veil;
+
           ctx.fillStyle = "#0e0e12";
           ctx.fillRect(0, 0, w, h);
 
-          const cx = w * 0.5;
-          const cy = h * 0.5;
-          const scale = Math.min(w, h);
-
-          const layers = [
-            { a: t * 0.55, f: 0.018, ph: t * 2.1 },
-            { a: -t * 0.62 + 0.7, f: 0.02, ph: -t * 1.85 },
-            { a: t * 0.38 + 1.2, f: 0.015, ph: t * 2.4 },
-          ];
-          ctx.globalAlpha = 0.92;
-          for (const L of layers) {
-            drawGrating(cx, cy, L.a, L.f, L.ph, "#fafafa", "#121212");
+          ctx.globalCompositeOperation = "source-over";
+          for (i = 0; i < layers.length; i++) {
+            if (stripePattern) {
+              drawGrating(cx, cy, layers[i].a, layers[i].ph, layers[i].al);
+            } else {
+              drawGratingFallback(
+                cx,
+                cy,
+                layers[i].a,
+                layers[i].ph,
+                layers[i].al,
+                "#fafafa",
+                "#121212"
+              );
+            }
           }
           ctx.globalAlpha = 1;
 
-          drawPinwheel(cx, cy, scale * 0.22, -t * 0.9, w < 400 ? 18 : 24);
-          drawPinwheel(cx, cy, scale * 0.12, t * 1.35, w < 400 ? 12 : 16);
+          drawPinwheel(cx, cy, scale * 0.22, -t * 0.42, w < 400 ? 18 : 24);
+          drawPinwheel(cx, cy, scale * 0.12, t * 0.58, w < 400 ? 12 : 16);
 
-          ctx.globalCompositeOperation = "difference";
+          ctx.globalCompositeOperation = "overlay";
+          ctx.globalAlpha = 0.85;
           drawWaves();
+          ctx.globalAlpha = 1;
           ctx.globalCompositeOperation = "source-over";
 
-          const cell = w < 480 ? 20 : 24;
-          const ox = Math.sin(t * 1.1) * cell;
-          const oy = Math.cos(t * 0.95) * cell;
-          for (let y = -cell; y < h + cell; y += cell) {
-            for (let x = -cell; x < w + cell; x += cell) {
-              const gx = Math.floor((x + ox) / cell);
-              const gy = Math.floor((y + oy) / cell);
-              if ((gx + gy) % 2 === 0) continue;
-              ctx.fillStyle = "rgba(255,255,255,0.04)";
-              ctx.fillRect(x, y, cell, cell);
-            }
+          veil = ctx.createRadialGradient(cx, cy, 0, cx, cy, scale * 0.75);
+          veil.addColorStop(0, "rgba(255,255,255,0.03)");
+          veil.addColorStop(0.5, "rgba(0,0,0,0)");
+          veil.addColorStop(1, "rgba(0,0,0,0.05)");
+          ctx.fillStyle = veil;
+          ctx.fillRect(0, 0, w, h);
+        }
+
+        function smoothPointer(dt) {
+          var k;
+          if (mx < 0) {
+            return;
           }
+          k = 1 - Math.exp(-dt * 0.014);
+          if (smMx < 0) {
+            smMx = mx;
+            smMy = my;
+            return;
+          }
+          smMx += (mx - smMx) * k;
+          smMy += (my - smMy) * k;
         }
 
         function updateJigOffset(dt) {
-          const responsiveness = Math.min(1, dt / 16.67);
-          const spring = jigActive ? 0.14 + responsiveness * 0.08 : 0.12;
+          var damp = Math.pow(0.9, dt / STEP_MS);
+          var ampBase;
+          var amp;
+          var tx;
+          var ty;
+          var targetX;
+          var targetY;
+          var stiffness = 0.000038;
+          var friction = Math.pow(0.82, dt / STEP_MS);
 
           if (!jigActive) {
-            offX *= 0.9;
-            offY *= 0.9;
-            pullX *= 0.88;
-            pullY *= 0.88;
+            offVX *= damp;
+            offVY *= damp;
+            offX += offVX * dt * 0.06;
+            offY += offVY * dt * 0.06;
+            offX *= damp;
+            offY *= damp;
+            pullX *= damp;
+            pullY *= damp;
             return;
           }
 
-          const ampBase = Math.min(w, h) * 0.06;
-          const amp = ampBase + Math.sin(t * 3.2) * (ampBase * 0.35);
-          const tx = Math.sin(t * 2.4) * amp + Math.cos(t * 1.1) * amp * 0.45;
-          const ty = Math.cos(t * 2.1) * amp + Math.sin(t * 1.35) * amp * 0.45;
+          ampBase = Math.min(w, h) * 0.055;
+          amp = ampBase * (0.88 + 0.12 * Math.sin(t * 0.9));
+          tx = Math.sin(t * 0.95) * amp + Math.cos(t * 0.41) * amp * 0.35;
+          ty = Math.cos(t * 0.82) * amp + Math.sin(t * 0.47) * amp * 0.35;
 
-          offX += (tx + pullX * 0.6 - offX) * spring;
-          offY += (ty + pullY * 0.6 - offY) * spring;
+          targetX = tx + pullX * 0.45;
+          targetY = ty + pullY * 0.45;
 
-          pullX *= 0.992;
-          pullY *= 0.992;
+          offVX += (targetX - offX) * stiffness * dt;
+          offVY += (targetY - offY) * stiffness * dt;
+          offVX *= friction;
+          offVY *= friction;
+          offX += offVX * dt;
+          offY += offVY * dt;
+
+          pullX *= Math.pow(0.992, dt / STEP_MS);
+          pullY *= Math.pow(0.992, dt / STEP_MS);
         }
 
         function drawPointer() {
-          if (mx < 0 || !jigActive) return;
+          var vx;
+          var vy;
+          var r;
+          var arm;
 
-          const vx = mx + offX;
-          const vy = my + offY;
-          const r = Math.max(8, Math.min(w, h) * 0.018);
-          const arm = r * 1.6;
+          if (smMx < 0 || !jigActive) {
+            return;
+          }
+
+          vx = smMx + offX;
+          vy = smMy + offY;
+          r = Math.max(8, Math.min(w, h) * 0.018);
+          arm = r * 1.6;
 
           ctx.save();
           ctx.lineCap = "round";
@@ -451,33 +594,102 @@
 
           if (touching || isCoarse) {
             ctx.beginPath();
-            ctx.arc(mx, my, r * 0.7, 0, Math.PI * 2);
+            ctx.arc(smMx, smMy, r * 0.7, 0, Math.PI * 2);
             ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
             ctx.lineWidth = Math.max(1.5, r * 0.15);
             ctx.stroke();
           }
 
-          ctx.setLineDash([4, 6]);
+          if (ctx.setLineDash) {
+            ctx.setLineDash([4, 6]);
+          }
           ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
           ctx.beginPath();
-          ctx.moveTo(mx, my);
+          ctx.moveTo(smMx, smMy);
           ctx.lineTo(vx, vy);
           ctx.stroke();
           ctx.restore();
         }
 
-        function frame(now) {
-          const dt = Math.min(48, now - lastFrame);
-          lastFrame = now;
-          t += dt * 0.001;
+        function frame(ts) {
+          var frameDt = ts - lastFrame;
+          lastFrame = ts;
+          if (frameDt > 80) {
+            frameDt = STEP_MS;
+          }
 
-          updateJigOffset(dt);
+          accum += frameDt;
+          if (accum > STEP_MS * 4) {
+            accum = STEP_MS;
+          }
+
+          while (accum >= STEP_MS) {
+            smoothPointer(STEP_MS);
+            updateJigOffset(STEP_MS);
+            t += STEP_MS * 0.001;
+            accum -= STEP_MS;
+          }
+
           drawPattern();
           drawPointer();
-          requestAnimationFrame(frame);
+          raf(frame);
         }
 
-        requestAnimationFrame(frame);
+        function onTouchMove(e) {
+          e.preventDefault();
+          onPointerMove(e);
+        }
+
+        function onDocTouchMove(e) {
+          e.preventDefault();
+        }
+
+        window.addEventListener("resize", scheduleResize, false);
+        window.addEventListener(
+          "orientationchange",
+          function () {
+            window.setTimeout(scheduleResize, 120);
+          },
+          false
+        );
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener("resize", scheduleResize, false);
+          window.visualViewport.addEventListener("scroll", scheduleResize, false);
+        }
+
+        addListener(window, "mousemove", onPointerMove, true);
+        addListener(window, "mouseleave", clearPointer, true);
+
+        addListener(
+          canvas,
+          "touchstart",
+          function (e) {
+            touching = true;
+            onPointerMove(e);
+          },
+          false
+        );
+        addListener(canvas, "touchmove", onTouchMove, false);
+        addListener(
+          canvas,
+          "touchend",
+          function (e) {
+            if (e.touches.length) {
+              onPointerMove(e);
+              return;
+            }
+            clearPointer();
+          },
+          true
+        );
+        addListener(canvas, "touchcancel", clearPointer, true);
+
+        addListener(document, "touchmove", onDocTouchMove, false);
+
+        initStripePattern();
+        resize();
+        lastFrame = now();
+        raf(frame);
       })();
     </script>
   </body>
