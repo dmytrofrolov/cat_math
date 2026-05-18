@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Jig</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html {
+        height: 100%;
+        height: 100dvh;
+        overflow: hidden;
+        background: #0a0a0c;
+      }
+      body {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        overflow: hidden;
+        overscroll-behavior: none;
+        touch-action: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        background: #0a0a0c;
+        font-family: system-ui, -apple-system, sans-serif;
+        user-select: none;
+      }
+      canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        display: block;
+        touch-action: none;
+      }
+      #zone {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: var(--zone-h, 72px);
+        pointer-events: none;
+        border-bottom: 2px solid transparent;
+        transition:
+          border-color 0.15s,
+          background 0.15s;
+        z-index: 2;
+      }
+      #zone.active {
+        border-bottom-color: rgba(255, 220, 120, 0.55);
+        background: linear-gradient(
+          180deg,
+          rgba(255, 200, 80, 0.14) 0%,
+          transparent 100%
+        );
+      }
+      #hint {
+        position: fixed;
+        left: 50%;
+        bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+        transform: translateX(-50%);
+        width: min(92vw, 28rem);
+        padding: 0 0.75rem;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: clamp(0.7rem, 2.8vw, 0.85rem);
+        line-height: 1.35;
+        letter-spacing: 0.02em;
+        text-align: center;
+        pointer-events: none;
+        z-index: 2;
+      }
+      body.jigging {
+        cursor: none;
+      }
+      @media (pointer: coarse) {
+        body.jigging {
+          cursor: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="zone" aria-hidden="true"></div>
+    <canvas id="c" aria-hidden="true"></canvas>
+    <p id="hint">Move into the top band to activate the jig.</p>
+
+    <script>
+      (function () {
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d");
+        const zoneEl = document.getElementById("zone");
+        const hint = document.getElementById("hint");
+        const root = document.documentElement;
+
+        const DPR = Math.min(window.devicePixelRatio || 1, 2);
+        const isCoarse = window.matchMedia("(pointer: coarse)").matches;
+
+        let w = 0;
+        let h = 0;
+        let viewLeft = 0;
+        let viewTop = 0;
+        let topZone = 72;
+        let t = 0;
+        let lastFrame = performance.now();
+
+        let mx = -1;
+        let my = -1;
+        let prevMx = -1;
+        let prevMy = -1;
+        let jigActive = false;
+        let touching = false;
+
+        let offX = 0;
+        let offY = 0;
+        let pullX = 0;
+        let pullY = 0;
+
+        function layoutMetrics() {
+          const vv = window.visualViewport;
+          if (vv) {
+            return {
+              w: Math.round(vv.width),
+              h: Math.round(vv.height),
+              left: Math.round(vv.offsetLeft),
+              top: Math.round(vv.offsetTop),
+            };
+          }
+          return {
+            w: window.innerWidth,
+            h: window.innerHeight,
+            left: 0,
+            top: 0,
+          };
+        }
+
+        function applyViewportLayout(m) {
+          w = m.w;
+          h = m.h;
+          viewLeft = m.left;
+          viewTop = m.top;
+
+          const px = function (n) {
+            return n + "px";
+          };
+          canvas.style.width = px(w);
+          canvas.style.height = px(h);
+          canvas.style.transform = "translate(" + px(viewLeft) + ", " + px(viewTop) + ")";
+          zoneEl.style.width = px(w);
+          zoneEl.style.transform = "translate(" + px(viewLeft) + ", " + px(viewTop) + ")";
+        }
+
+        function updateTopZone() {
+          topZone = Math.round(Math.min(96, Math.max(52, h * 0.12)));
+          root.style.setProperty("--zone-h", topZone + "px");
+        }
+
+        function resize() {
+          const m = layoutMetrics();
+          applyViewportLayout(m);
+          updateTopZone();
+
+          canvas.width = Math.floor(w * DPR);
+          canvas.height = Math.floor(h * DPR);
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+          if (mx >= 0) setJigging(inTopZone(my));
+        }
+
+        function inTopZone(y) {
+          return y >= 0 && y <= topZone;
+        }
+
+        function pointerFromEvent(e) {
+          let clientX;
+          let clientY;
+          if (e.touches && e.touches.length) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+          } else if (e.changedTouches && e.changedTouches.length) {
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
+          } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+          }
+          const x = Math.max(0, Math.min(w, clientX - viewLeft));
+          const y = Math.max(0, Math.min(h, clientY - viewTop));
+          return { x, y };
+        }
+
+        function applyMovement(dx, dy) {
+          if (jigActive) {
+            pullX += dx * 0.35;
+            pullY += dy * 0.35;
+          } else {
+            pullX *= 0.85;
+            pullY *= 0.85;
+          }
+        }
+
+        function setPointer(x, y, dx, dy) {
+          prevMx = mx;
+          prevMy = my;
+          mx = x;
+          my = y;
+          setJigging(inTopZone(my));
+          if (dx !== undefined) applyMovement(dx, dy);
+        }
+
+        function clearPointer() {
+          mx = -1;
+          my = -1;
+          prevMx = -1;
+          prevMy = -1;
+          touching = false;
+          setJigging(false);
+        }
+
+        function setJigging(on) {
+          if (jigActive === on) return;
+          jigActive = on;
+          document.body.classList.toggle("jigging", on && !isCoarse);
+          zoneEl.classList.toggle("active", on);
+          if (on) {
+            hint.textContent = isCoarse
+              ? "Jig active — drag in the top band. Lift your finger to stop."
+              : "Jig active — your hand may drift. Leave the top band to stop.";
+          } else {
+            hint.textContent = isCoarse
+              ? "Touch and drag in the top band to activate the jig."
+              : "Move into the top band to activate the jig.";
+          }
+        }
+
+        function onPointerMove(e) {
+          const p = pointerFromEvent(e);
+          let dx = 0;
+          let dy = 0;
+          if (prevMx >= 0) {
+            dx = p.x - prevMx;
+            dy = p.y - prevMy;
+          } else if (e.movementX !== undefined) {
+            dx = e.movementX;
+            dy = e.movementY;
+          }
+          setPointer(p.x, p.y, dx, dy);
+        }
+
+        window.addEventListener("resize", resize);
+        window.addEventListener("orientationchange", function () {
+          setTimeout(resize, 100);
+        });
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener("resize", resize);
+          window.visualViewport.addEventListener("scroll", resize);
+        }
+        resize();
+
+        window.addEventListener("mousemove", onPointerMove, { passive: true });
+        window.addEventListener("mouseleave", clearPointer, { passive: true });
+
+        canvas.addEventListener(
+          "touchstart",
+          function (e) {
+            touching = true;
+            onPointerMove(e);
+          },
+          { passive: false }
+        );
+        canvas.addEventListener(
+          "touchmove",
+          function (e) {
+            e.preventDefault();
+            onPointerMove(e);
+          },
+          { passive: false }
+        );
+        canvas.addEventListener(
+          "touchend",
+          function (e) {
+            if (e.touches.length) {
+              onPointerMove(e);
+              return;
+            }
+            clearPointer();
+          },
+          { passive: true }
+        );
+        canvas.addEventListener("touchcancel", clearPointer, { passive: true });
+
+        document.addEventListener(
+          "touchmove",
+          function (e) {
+            e.preventDefault();
+          },
+          { passive: false }
+        );
+        document.addEventListener(
+          "gesturestart",
+          function (e) {
+            e.preventDefault();
+          },
+          { passive: false }
+        );
+
+        function drawGrating(cx, cy, angle, freq, phase, fg, bg) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(angle);
+          const span = Math.max(w, h) * 1.6;
+          const steps = Math.ceil((span * freq) / 8) + 2;
+          for (let i = -steps; i <= steps; i++) {
+            const p = ((i / freq + phase) % 1 + 1) % 1;
+            ctx.fillStyle = p < 0.5 ? fg : bg;
+            const y0 = (i / freq) * 8 - 4;
+            ctx.fillRect(-span, y0, span * 2, 4);
+          }
+          ctx.restore();
+        }
+
+        function drawPinwheel(cx, cy, r, spin, teeth) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(spin);
+          for (let i = 0; i < teeth; i++) {
+            const a0 = (i / teeth) * Math.PI * 2;
+            const a1 = a0 + (Math.PI * 2) / teeth / 2;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, r, a0, a1);
+            ctx.closePath();
+            ctx.fillStyle = i % 2 ? "#f5f5f5" : "#101010";
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        function drawWaves() {
+          const cx = w * 0.5;
+          const cy = h * 0.52;
+          const rings = w < 480 ? 10 : 14;
+          const step = w < 480 ? 22 : 28;
+          for (let i = 0; i < rings; i++) {
+            const rr = 32 + i * step + Math.sin(t * 1.7 + i * 0.4) * 6;
+            ctx.beginPath();
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.strokeStyle =
+              i % 2 === 0 ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)";
+            ctx.lineWidth = 2 + (i % 3);
+            ctx.stroke();
+          }
+        }
+
+        function drawPattern() {
+          ctx.fillStyle = "#0e0e12";
+          ctx.fillRect(0, 0, w, h);
+
+          const cx = w * 0.5;
+          const cy = h * 0.5;
+          const scale = Math.min(w, h);
+
+          const layers = [
+            { a: t * 0.55, f: 0.018, ph: t * 2.1 },
+            { a: -t * 0.62 + 0.7, f: 0.02, ph: -t * 1.85 },
+            { a: t * 0.38 + 1.2, f: 0.015, ph: t * 2.4 },
+          ];
+          ctx.globalAlpha = 0.92;
+          for (const L of layers) {
+            drawGrating(cx, cy, L.a, L.f, L.ph, "#fafafa", "#121212");
+          }
+          ctx.globalAlpha = 1;
+
+          drawPinwheel(cx, cy, scale * 0.22, -t * 0.9, w < 400 ? 18 : 24);
+          drawPinwheel(cx, cy, scale * 0.12, t * 1.35, w < 400 ? 12 : 16);
+
+          ctx.globalCompositeOperation = "difference";
+          drawWaves();
+          ctx.globalCompositeOperation = "source-over";
+
+          const cell = w < 480 ? 20 : 24;
+          const ox = Math.sin(t * 1.1) * cell;
+          const oy = Math.cos(t * 0.95) * cell;
+          for (let y = -cell; y < h + cell; y += cell) {
+            for (let x = -cell; x < w + cell; x += cell) {
+              const gx = Math.floor((x + ox) / cell);
+              const gy = Math.floor((y + oy) / cell);
+              if ((gx + gy) % 2 === 0) continue;
+              ctx.fillStyle = "rgba(255,255,255,0.04)";
+              ctx.fillRect(x, y, cell, cell);
+            }
+          }
+        }
+
+        function updateJigOffset(dt) {
+          const responsiveness = Math.min(1, dt / 16.67);
+          const spring = jigActive ? 0.14 + responsiveness * 0.08 : 0.12;
+
+          if (!jigActive) {
+            offX *= 0.9;
+            offY *= 0.9;
+            pullX *= 0.88;
+            pullY *= 0.88;
+            return;
+          }
+
+          const ampBase = Math.min(w, h) * 0.06;
+          const amp = ampBase + Math.sin(t * 3.2) * (ampBase * 0.35);
+          const tx = Math.sin(t * 2.4) * amp + Math.cos(t * 1.1) * amp * 0.45;
+          const ty = Math.cos(t * 2.1) * amp + Math.sin(t * 1.35) * amp * 0.45;
+
+          offX += (tx + pullX * 0.6 - offX) * spring;
+          offY += (ty + pullY * 0.6 - offY) * spring;
+
+          pullX *= 0.992;
+          pullY *= 0.992;
+        }
+
+        function drawPointer() {
+          if (mx < 0 || !jigActive) return;
+
+          const vx = mx + offX;
+          const vy = my + offY;
+          const r = Math.max(8, Math.min(w, h) * 0.018);
+          const arm = r * 1.6;
+
+          ctx.save();
+          ctx.lineCap = "round";
+          ctx.strokeStyle = "rgba(255, 220, 120, 0.95)";
+          ctx.lineWidth = Math.max(2, r * 0.22);
+          ctx.beginPath();
+          ctx.moveTo(vx - arm, vy);
+          ctx.lineTo(vx + arm, vy);
+          ctx.moveTo(vx, vy - arm);
+          ctx.lineTo(vx, vy + arm);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(vx, vy, r * 0.45, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+          ctx.stroke();
+
+          if (touching || isCoarse) {
+            ctx.beginPath();
+            ctx.arc(mx, my, r * 0.7, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+            ctx.lineWidth = Math.max(1.5, r * 0.15);
+            ctx.stroke();
+          }
+
+          ctx.setLineDash([4, 6]);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+          ctx.beginPath();
+          ctx.moveTo(mx, my);
+          ctx.lineTo(vx, vy);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function frame(now) {
+          const dt = Math.min(48, now - lastFrame);
+          lastFrame = now;
+          t += dt * 0.001;
+
+          updateJigOffset(dt);
+          drawPattern();
+          drawPointer();
+          requestAnimationFrame(frame);
+        }
+
+        requestAnimationFrame(frame);
+      })();
+    </script>
+  </body>
+</html>
