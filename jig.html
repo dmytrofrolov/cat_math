@@ -103,13 +103,16 @@
         var zoneEl = document.getElementById("zone");
         var hint = document.getElementById("hint");
 
-        var DPR = Math.min(window.devicePixelRatio || 1, 2);
+        var ua = navigator.userAgent || "";
+        var isIOS9 = /(iPhone|iPad|iPod).*OS 9_/i.test(ua);
         var isCoarse = false;
         try {
           isCoarse = window.matchMedia("(pointer: coarse)").matches;
         } catch (e1) {
           isCoarse = "ontouchstart" in window;
         }
+        var lite = false;
+        var DPR = 1;
 
         var w = 0;
         var h = 0;
@@ -176,6 +179,9 @@
         } catch (e2) {
           supportsPassive = false;
         }
+
+        lite = isIOS9 || (!supportsPassive && "ontouchstart" in window);
+        DPR = lite ? 1 : Math.min(window.devicePixelRatio || 1, 2);
 
         function addListener(target, type, handler, passive) {
           if (supportsPassive && passive !== undefined) {
@@ -259,7 +265,9 @@
           } else {
             ctx.scale(DPR, DPR);
           }
-          initStripePattern();
+          if (!lite) {
+            initStripePattern();
+          }
 
           if (mx >= 0) {
             setJigging(inTopZone(my));
@@ -321,6 +329,10 @@
           prevMy = my;
           mx = x;
           my = y;
+          if (lite) {
+            smMx = x;
+            smMy = y;
+          }
           setJigging(inTopZone(my));
           if (dx !== undefined) {
             applyMovement(dx, dy);
@@ -399,19 +411,30 @@
           ctx.restore();
         }
 
-        function drawGratingFallback(cx, cy, angle, phase, alpha, fg, bg) {
+        function drawGratingFallback(cx, cy, angle, phase, alpha, fg, bg, stripe) {
+          var band = stripe || 12;
           ctx.save();
           ctx.translate(cx, cy);
           ctx.rotate(angle);
-          var span = Math.max(w, h) * 1.6;
+          var span = Math.max(w, h) * 1.4;
           var i;
-          var steps = Math.ceil((span * 0.018) / 8) + 2;
+          var steps = Math.ceil(span / band) + 1;
           ctx.globalAlpha = alpha;
           for (i = -steps; i <= steps; i++) {
-            var y0 = (i / 0.018) * 8 - 4 + phase * 8;
+            var y0 = i * band + phase * band;
             ctx.fillStyle = i % 2 === 0 ? fg : bg;
-            ctx.fillRect(-span, y0, span * 2, 4);
+            ctx.fillRect(-span, y0, span * 2, band * 0.5);
           }
+          ctx.restore();
+        }
+
+        function drawPinwheelLite(cx, cy, r, spin) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(spin);
+          ctx.fillStyle = "#f2f2f2";
+          ctx.fillRect(-r, -3, r * 2, 6);
+          ctx.fillRect(-3, -r, 6, r * 2);
           ctx.restore();
         }
 
@@ -454,7 +477,47 @@
           }
         }
 
+        function drawPatternLite() {
+          var cx = w * 0.5;
+          var cy = h * 0.5;
+          var scale = Math.min(w, h);
+          var i;
+          var rr;
+          var step = scale * 0.14;
+
+          ctx.fillStyle = "#0e0e12";
+          ctx.fillRect(0, 0, w, h);
+
+          drawGratingFallback(
+            cx,
+            cy,
+            t * 0.25,
+            t * 0.5,
+            0.5,
+            "#f0f0f0",
+            "#141414",
+            16
+          );
+          drawPinwheelLite(cx, cy, scale * 0.2, -t * 0.4);
+
+          ctx.globalAlpha = 0.4;
+          for (i = 0; i < 5; i++) {
+            rr = 40 + i * step;
+            ctx.beginPath();
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.strokeStyle = i % 2 === 0 ? "#ffffff" : "#000000";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        }
+
         function drawPattern() {
+          if (lite) {
+            drawPatternLite();
+            return;
+          }
+
           var cx = w * 0.5;
           var cy = h * 0.5;
           var scale = Math.min(w, h);
@@ -481,7 +544,8 @@
                 layers[i].ph,
                 layers[i].al,
                 "#fafafa",
-                "#121212"
+                "#121212",
+                12
               );
             }
           }
@@ -527,18 +591,15 @@
           var ty;
           var targetX;
           var targetY;
-          var stiffness = 0.000038;
-          var friction = Math.pow(0.82, dt / STEP_MS);
+          var blend;
 
           if (!jigActive) {
-            offVX *= damp;
-            offVY *= damp;
-            offX += offVX * dt * 0.06;
-            offY += offVY * dt * 0.06;
             offX *= damp;
             offY *= damp;
             pullX *= damp;
             pullY *= damp;
+            offVX = 0;
+            offVY = 0;
             return;
           }
 
@@ -549,6 +610,18 @@
 
           targetX = tx + pullX * 0.45;
           targetY = ty + pullY * 0.45;
+
+          if (lite) {
+            blend = 1 - Math.exp(-dt * 0.008);
+            offX += (targetX - offX) * blend;
+            offY += (targetY - offY) * blend;
+            pullX *= damp;
+            pullY *= damp;
+            return;
+          }
+
+          var stiffness = 0.000038;
+          var friction = Math.pow(0.82, dt / STEP_MS);
 
           offVX += (targetX - offX) * stiffness * dt;
           offVY += (targetY - offY) * stiffness * dt;
@@ -562,22 +635,28 @@
         }
 
         function drawPointer() {
+          var px;
+          var py;
           var vx;
           var vy;
           var r;
           var arm;
 
-          if (smMx < 0 || !jigActive) {
+          if (mx < 0 || !jigActive) {
             return;
           }
 
-          vx = smMx + offX;
-          vy = smMy + offY;
+          px = lite ? mx : smMx;
+          py = lite ? my : smMy;
+          if (px < 0) {
+            return;
+          }
+
+          vx = px + offX;
+          vy = py + offY;
           r = Math.max(8, Math.min(w, h) * 0.018);
           arm = r * 1.6;
 
-          ctx.save();
-          ctx.lineCap = "round";
           ctx.strokeStyle = "rgba(255, 220, 120, 0.95)";
           ctx.lineWidth = Math.max(2, r * 0.22);
           ctx.beginPath();
@@ -587,28 +666,13 @@
           ctx.lineTo(vx, vy + arm);
           ctx.stroke();
 
-          ctx.beginPath();
-          ctx.arc(vx, vy, r * 0.45, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-          ctx.stroke();
-
-          if (touching || isCoarse) {
+          if (!lite && (touching || isCoarse)) {
             ctx.beginPath();
-            ctx.arc(smMx, smMy, r * 0.7, 0, Math.PI * 2);
+            ctx.arc(px, py, r * 0.7, 0, Math.PI * 2);
             ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
             ctx.lineWidth = Math.max(1.5, r * 0.15);
             ctx.stroke();
           }
-
-          if (ctx.setLineDash) {
-            ctx.setLineDash([4, 6]);
-          }
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
-          ctx.beginPath();
-          ctx.moveTo(smMx, smMy);
-          ctx.lineTo(vx, vy);
-          ctx.stroke();
-          ctx.restore();
         }
 
         function frame(ts) {
@@ -618,16 +682,20 @@
             frameDt = STEP_MS;
           }
 
-          accum += frameDt;
-          if (accum > STEP_MS * 4) {
-            accum = STEP_MS;
-          }
-
-          while (accum >= STEP_MS) {
-            smoothPointer(STEP_MS);
-            updateJigOffset(STEP_MS);
-            t += STEP_MS * 0.001;
-            accum -= STEP_MS;
+          if (lite) {
+            updateJigOffset(frameDt);
+            t += frameDt * 0.001;
+          } else {
+            accum += frameDt;
+            if (accum > STEP_MS * 2) {
+              accum = STEP_MS;
+            }
+            if (accum >= STEP_MS) {
+              smoothPointer(STEP_MS);
+              updateJigOffset(STEP_MS);
+              t += STEP_MS * 0.001;
+              accum -= STEP_MS;
+            }
           }
 
           drawPattern();
@@ -686,7 +754,9 @@
 
         addListener(document, "touchmove", onDocTouchMove, false);
 
-        initStripePattern();
+        if (!lite) {
+          initStripePattern();
+        }
         resize();
         lastFrame = now();
         raf(frame);
